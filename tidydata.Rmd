@@ -1,0 +1,339 @@
+---
+title: "tidyingdata.supremecompare"
+author: "Alexa Jordan"
+date: "10/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+library(tidytext)
+library(ggpubr) 
+library(tidyverse)
+library(rvest)
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+library(pdftools)
+
+
+library(tm)
+corp <- Corpus(URISource(files),
+               readerControl = list(reader = readPDF))
+
+files <- list.files(pattern = "pdf$")
+opinions <- lapply(files, pdf_text)
+
+
+url <- c("https://www.congress.gov/111/chrg/shrg56940/CHRG-111shrg56940.htm", 
+         "https://www.congress.gov/109/chrg/shrg27916/CHRG-109shrg27916.htm", 
+         "https://www.congress.gov/115/chrg/CHRG-115shrg28638/CHRG-115shrg28638.htm")
+
+
+hearings <- c()
+contents <- c()
+for(i in 1:length(url)){ 
+  
+  cong_wbpg <- read_html(url[i])
+  body <- cong_wbpg %>%
+    html_nodes("pre") %>%
+    html_text()
+  contents = append(contents, body)
+  
+  cong_wbpg <- read_html(url[i])
+  hearing <- cong_wbpg %>%
+    html_node("title") %>%
+    html_text()  
+  hearings = append(hearings, rep(hearing,each=length(body)))
+  
+}
+
+hearing_text <- data.frame(hearing = hearings, text = contents)
+
+hearing_words <- hearing_text %>%
+  unnest_tokens(word, text) %>%
+  count(hearing, word, sort = TRUE) 
+
+filtered_words <- hearing_words %>% 
+  filter(word == "family" | word == "women" | word == "woman" | word ==  "children" |
+           word == "father" | word == "mother")
+
+total_words <- hearing_words %>% 
+  group_by(hearing) %>% 
+  summarize(total = sum(n))
+  
+hearing_words_data <- left_join(filtered_words, total_words) %>% 
+  mutate(word_proportions = n/total)
+
+hearing_words_data
+
+plot1 <- ggplot(hearing_words_data, aes(word, word_proportions, fill = hearing)) +
+  geom_col(show.legend = FALSE, position = "dodge") 
+    
+plot1
+
+  +
+  facet_wrap(~hearing, ncol = 2, scales = "free_y")
+
+
+freq_by_rank <- hearing_words_data %>%
+  group_by(hearing) %>%
+  mutate(rank = row_number(),
+         `term frequency` = n/total)
+
+freq_by_rank
+
+
+freq_by_rank %>%
+  ggplot(aes(rank, `term frequency`, color = hearing)) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) +
+  scale_x_log10() +
+  scale_y_log10()
+
+
+hearing_words_data <- hearing_words_data %>%
+  bind_tf_idf(word, hearing, n)
+
+hearing_words_data %>%
+  select(-total) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(hearing) %>% 
+  top_n(20) %>% 
+  ungroup() %>%
+  ggplot(aes(word, tf_idf, fill = hearing)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~hearing, ncol = 2, scales = "free") +
+  coord_flip() 
+```
+
+
+
+```{r pressure, echo=FALSE}
+
+library(readxl)
+library(tidytext)
+library(ggpubr) 
+library(tidyverse)
+library(rvest)
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+library(pdftools)
+library(gt)
+library(ggthemes)
+library(lubridate)
+library(rstanarm)
+
+nomination_data <- read_excel("Alexa_Final_Project_Inner/nomination_data.xlsx") %>% 
+  mutate(party = ifelse(Party == "Republican", 
+                        "Republican Nominee", 
+                        "Democratic Nominee")) %>% 
+  mutate(gender = ifelse(Gender == "F", 
+                         "Female", 
+                         "Male")) %>% 
+  mutate(female = ifelse(gender == "Female", 
+                         1, 
+                         0)) %>% 
+  mutate(equal = ifelse(Party == Maj_Party, 
+                        "Presidential Party Matches Senate Majority", 
+                        "Presidential Party Does Not Match Senate Majority"))
+
+plot2 <- ggplot(nomination_data, aes(gender)) + 
+  geom_bar() +
+  facet_wrap(~ party) +
+  theme_light() +
+  theme(text = element_text(family = "Palatino"),
+        axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 10)) +
+  theme(strip.background = element_rect(fill = "palevioletred3")) +
+  labs(title = "Overview of Supreme Court Nominees by Party \n 1971-2020", 
+       x = "Gender of Nominee", 
+       y = "Number")
+  
+fit_obj <- stan_glm(data = nomination_data, 
+                    female ~ party - 1, 
+                    family = gaussian(), 
+                    refresh = 0)
+
+nomination_data2 <- nomination_data %>% 
+  filter(!Yes == "n/a") %>% 
+  mutate(year = as.numeric(year(Date))) %>% 
+  mutate(affirm = as.numeric(Yes)) %>% 
+  filter(!affirm == 0)
+
+plot3 <- ggplot(nomination_data2, aes(year, affirm)) +
+  geom_point() + 
+  facet_wrap(~equal) +
+  geom_smooth(method = "lm", se = FALSE, color = "#68cdac") + 
+  theme_light() +
+  theme(text = element_text(family = "Palatino"),
+        axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 10)) +
+  theme(strip.background = element_rect(fill = "#68cdac")) +
+  labs(y = "Affirmative Votes", 
+       x = "Year (1971-2020)", 
+       title = "Political Polarization in Supreme Court Senate Confirmations")
+
+plot3
+```
+
+```{r}
+
+# Selecting the judges column 
+
+library(lubridate)
+library(janitor)
+judges <- read_csv("Alexa_Final_Project_Inner/judges.csv", 
+                   col_types =
+                     cols('Gender' = col_character(), 
+                          'Race or Ethnicity' = col_character(), 
+                          'Confirmation Date (1)' = col_date(),
+                          'Party of Appointing President (1)' = col_character(),
+                          'Court Type (1)' = col_character(),
+                          'Appointing President (1)' = col_character(),
+                          'School (1)' = col_character(), 
+                          'School (2)' = col_character(), 
+                          'Ayes/Nays (1)' = col_character())) %>% 
+  clean_names() %>% 
+    select(gender, 
+           race_or_ethnicity, 
+           court_type_1, 
+           appointing_president_1, 
+           party_of_appointing_president_1, 
+           ayes_nays_1, 
+           confirmation_date_1, 
+           school_1, 
+           school_2) %>% 
+  rename(
+    c("race" = "race_or_ethnicity"), 
+    c("type" = "court_type_1"), 
+    c("president" = "appointing_president_1"), 
+    c("party" = "party_of_appointing_president_1"), 
+    c("ayes_nays" = "ayes_nays_1"), 
+    c("date" = "confirmation_date_1"), 
+    c("undergrad" = "school_1"), 
+    c("law_school" = "school_2"))
+  
+```
+
+```{r}
+# Arrange judges dataset for the 39 years since Sandra Day O'Connor, the first
+# female Supreme Court Justice was nominated to the US Supreme Court 
+library(ggthemes)
+judges <- judges %>% 
+  filter(date >= as.Date("1981-08-19") & date <= as.Date("2020-11-01")) %>% 
+  arrange(date) 
+  
+over_time <- ggplot(judges, aes(x = date, fill = party)) + 
+  geom_histogram(color = "white", binwidth = 200) +
+  scale_fill_manual(name = "Nominating Party", 
+                    values = c("#6889cd", "#cd7a68"), 
+                    labels = c("Democrat", "Republican")) +
+  theme(text = element_text(family = "Palatino"),
+        axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 10)) +
+  labs(title = "Presidential Nominees to Federal Courts", 
+       subtitle = "From 1981 to 2020", 
+       x = "Date", 
+       y = "Count") 
+
+# table to view the numbers of judges 
+
+stats <- judges %>% 
+  group_by(party, gender) %>% 
+  summarize(judges = n(), .groups = "drop") %>% 
+  gt() %>% 
+  cols_label(party = "Party", 
+             gender = "Gender", 
+             judges = "Number of Judges") %>%  
+  tab_style(cell_borders(sides = "right"), 
+            location = cells_body(columns = vars(party))) %>% 
+  tab_style(cell_text(weight = "bold"),
+            location = cells_body(columns = vars(judges))) %>%
+  cols_align(align = "center", columns = TRUE) %>% 
+  fmt_markdown(columns = TRUE)
+
+over_time
+stats
+
+# just women graphs 
+
+female_nominees <- judges %>% 
+  filter(gender == "Female")
+
+ ggplot(female_nominees, aes(x = date, fill = party)) + 
+  geom_histogram(color = "white", binwidth = 300) +
+  scale_fill_manual(name = "Nominating Party", 
+                    values = c("#6889cd", "#cd7a68"), 
+                    labels = c("Democrat", "Republican")) +
+  theme(text = element_text(family = "Palatino"),
+        axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 10)) +
+  labs(title = "Women Confirmed to Federal Courts", 
+       subtitle = "(1981 to 2020)", 
+       x = "Date", 
+       y = "Count") + theme_light()
+
+female_top10 <- female_nominees %>% 
+  group_by(law_school) %>% 
+  summarise(law_school_totals = n(), .groups = "drop") %>% 
+  filter(law_school %in% c("Yale Law School", 
+                           "Harvard Law School", 
+                           "Stanford Law", 
+                           "Columbia Law School", 
+                           "Columbia Law School", 
+                           "Chicago-Kent College of Law", 
+                           "New York University School of Law", 
+                           "Northwestern University School of Law (now Pritzker School of Law)", 
+                           "Northwestern University",
+                           "Stanford University", 
+                           "University of California, Berkeley, School of Law", 
+                           "University of Michigan Law School", 
+                           "University of Michigan", 
+                           "University of Virginia",	
+                           "University of Virginia School of Law", 
+                           "University of Pennsylvania Law School (now Carey Law School)")) %>% 
+  summarise(sum = sum(law_school_totals)/406) %>% 
+  mutate(top_10 = "Female Nominees")
+
+
+
+
+male_top10 <- judges %>% 
+  filter(gender == "Male") %>% 
+  group_by(law_school) %>% 
+  summarise(law_school_totals = n(), .groups = "drop") %>% 
+  filter(law_school %in% c("Yale Law School", 
+                           "Harvard Law School", 
+                           "Stanford Law", 
+                           "Columbia Law School", 
+                           "Columbia Law School", 
+                           "Chicago-Kent College of Law", 
+                           "New York University School of Law", 
+                           "Northwestern University School of Law (now Pritzker School of Law)", 
+                           "Northwestern University",
+                           "Stanford University", 
+                           "University of California, Berkeley, School of Law", 
+                           "University of Michigan Law School", 
+                           "University of Michigan", 
+                           "University of Virginia",	
+                           "University of Virginia School of Law", 
+                           "University of Pennsylvania Law School (now Carey Law School)")) %>% 
+  summarise(sum = sum(law_school_totals/1274)) %>% 
+  mutate(top_10 = "Male Nominees")
+
+top10_table <- full_join(male_top10, female_top10, by = c("sum", "top_10")) %>% 
+  gt() %>% 
+  cols_label(sum = "Attended Top 10", 
+             top_10 = "Gender")
+
+top10_table
+
+```
+
