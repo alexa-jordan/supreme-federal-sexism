@@ -5,36 +5,36 @@ date: "10/20/2020"
 output: html_document
 ---
 
-```{r setup, include = FALSE}
-knitr::opts_chunk$set(echo = FALSE)
-
-
-filePath <- "https://www.congress.gov/111/chrg/shrg56940/CHRG-111shrg56940.htm"
-text <- readLines(filePath)
-docs <- Corpus(VectorSource(text))
-inspect(docs)
-
-toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
-docs <- tm_map(docs, toSpace, "/")
-docs <- tm_map(docs, toSpace, "@")
-docs <- tm_map(docs, toSpace, "\\|")
-
-# Convert the text to lower case
-docs <- tm_map(docs, content_transformer(tolower))
-# Remove numbers
-docs <- tm_map(docs, removeNumbers)
-# Remove english common stopwords
-docs <- tm_map(docs, removeWords, stopwords("the"))
-# Remove your own stop word
-# specify your stopwords as a character vector
-docs <- tm_map(docs, removeWords, c("and", "the")) 
-# Remove punctuations
-docs <- tm_map(docs, removePunctuation)
-# Eliminate extra white spaces
-docs <- tm_map(docs, stripWhitespace)
-# Text stemming
-# docs <- tm_map(docs, stemDocument)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("tidyverse")
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("pdftools")
 
 ```
 
 
+
+```{r cars}
+# folder with PDF of confirmation hearings 
+
+dest <- "C:\\Users\\Desktop\\supreme"
+
+file <- system.file(file.path("doc", "Sweave.pdf"), package = "utils")
+
+myfiles <- pdf_text(dest)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
