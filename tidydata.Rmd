@@ -11,17 +11,21 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ```{r cars}
+library(tidyverse)
+library(readxl)
+library(gt)
+library(ggthemes)
+library(lubridate)
+library(rstanarm)
 library(tidytext)
 library(ggpubr) 
-library(tidyverse)
 library(rvest)
 library(dplyr)
 library(tidytext)
 library(ggplot2)
 library(pdftools)
-
-
 library(tm)
+library(broom.mixed)
 
 
 files <- list.files(path = "pdf_supreme_court", 
@@ -34,150 +38,191 @@ opinions.tdm <- TermDocumentMatrix(corp,
                                    control = 
                                      list(
                                           tolower = TRUE,
-                                          stemming = TRUE,
                                           removeNumbers = TRUE,
                                           bounds = list(global = c(1, Inf)))) 
-inspect(opinions.tdm[1:10,])
-findFreqTerms(opinions.tdm, 
-              lowfreq = 100, 
-              highfreq = Inf)
+# inspect(opinions.tdm[1:10,])
+# findFreqTerms(opinions.tdm, 
+#               lowfreq = 100, 
+#               highfreq = Inf)
 
 ft <- findFreqTerms(opinions.tdm, 
                     lowfreq = 5, 
                     highfreq = Inf) 
+
 ft_matrix <- as.matrix(opinions.tdm[ft,])  %>% 
   as_tibble(rownames = pkgconfig::get_config("tibble::rownames", NA)) %>% 
   rownames_to_column(var = "Word") %>% 
-  rename("Ginsburg" = 2, 
-         "Kagan" = 3, 
-         "Kennedy" = 4, 
-         "O'Connor" = 5, 
-         "Powell" = 6, 
-         "Rehnquist" = 7, 
-         "Roberts" = 8, 
-         "Scalia" = 9, 
-         "Souter" = 10) %>% 
-  arrange(desc(Ginsburg)) %>% 
+  rename("Stephen Breyer" = 2, 
+         "Ruth Bader Ginsburg" = 3, 
+         "Neil Gorsuch" = 4,
+         "Elena Kagan" = 5, 
+         "Anthony Kennedy" = 6, 
+         "Sandra Day O'Connor" = 7, 
+         "John Roberts" = 8, 
+         "Antonin Scalia" = 9, 
+         "Sonia Sotomayor" = 10,
+         "David Souter" = 11) %>% 
+  pivot_longer(`Stephen Breyer`:`David Souter`, names_to = "Justice", values_to = "Count") %>% 
+  arrange(desc(Justice))
+
+totals <- ft_matrix %>% 
+  group_by(Justice) %>% 
+  summarize(total = sum(Count)) 
+  
+summary_justice <- as_tibble(ft_matrix)
+
+summary_justice <- summary_justice %>% 
+  mutate(Word = recode(Word, 
+                       "man" = "men", 
+                       "women" = "woman", 
+                       "abort" = "abortion", 
+                       "abor" = "abortion", 
+                       "aborted" = "abortion", 
+                       "aborting" = "abortion", 
+                       "abortionist" = "abortion", 
+                       "abortionists" = "abortion", 
+                       "abortionrights" = "abortion", 
+                       "abortionrelated" = "abortion", 
+                       "abortions" = "abortion", 
+                       "aboition" = "abortion")) %>% 
+  group_by(Word, Justice) %>% 
+  summarise(Count = sum(Count), .groups = "drop") %>% 
+  left_join(totals, by = c("Justice" = "Justice")) %>% 
+  mutate(prop = (Count/total)*100)
+
+
+summary_justice_final <- summary_justice %>% 
    filter(Word == "family" | Word == "women" | Word == "woman" | Word ==  "children" |
           Word == "father" | Word == "mother" | Word == "abortion" | Word == "Roe" |
-            Word == "abort" | Word == "men" | Word == "man")
+            Word == "abort" | Word == "men" | Word == "man" | Word == "husband" |
+          Word == "wife")
 
-
-names(ft_matrix)
-
-
-
-
-
-# corp <- Corpus(URISource(files),
-#                readerControl = list(reader = readPDF))
-
-
-
-
-
-
-
-url <- c("https://www.congress.gov/111/chrg/shrg56940/CHRG-111shrg56940.htm", 
-         "https://www.congress.gov/109/chrg/shrg27916/CHRG-109shrg27916.htm", 
-         "https://www.congress.gov/115/chrg/CHRG-115shrg28638/CHRG-115shrg28638.htm")
-
-
-hearings <- c()
-contents <- c()
-for(i in 1:length(url)){ 
-  
-  cong_wbpg <- read_html(url[i])
-  body <- cong_wbpg %>%
-    html_nodes("pre") %>%
-    html_text()
-  contents = append(contents, body)
-  
-  cong_wbpg <- read_html(url[i])
-  hearing <- cong_wbpg %>%
-    html_node("title") %>%
-    html_text()  
-  hearings = append(hearings, rep(hearing,each=length(body)))
-  
-}
-
-hearing_text <- data.frame(hearing = hearings, text = contents)
-
-hearing_words <- hearing_text %>%
-  unnest_tokens(word, text) %>%
-  count(hearing, word, sort = TRUE) 
-
-filtered_words <- hearing_words %>% 
-  filter(word == "family" | word == "women" | word == "woman" | word ==  "children" |
-           word == "father" | word == "mother" | word == "abortion" | word == "Roe")
-
-total_words <- hearing_words %>% 
-  group_by(hearing) %>% 
-  summarize(total = sum(n))
-  
-hearing_words_data <- left_join(filtered_words, total_words) %>% 
-  mutate(word_proportions = n/total)
-
-hearing_words_data
-
-plot1 <- ggplot(hearing_words_data, aes(word, word_proportions, fill = hearing)) +
-  geom_col(show.legend = FALSE, position = "dodge") 
-    
-plot1
-
-  +
-  facet_wrap(~hearing, ncol = 2, scales = "free_y")
-
-
-freq_by_rank <- hearing_words_data %>%
-  group_by(hearing) %>%
-  mutate(rank = row_number(),
-         `term frequency` = n/total)
-
-freq_by_rank
-
-
-freq_by_rank %>%
-  ggplot(aes(rank, `term frequency`, color = hearing)) +
-  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) +
-  scale_x_log10() +
-  scale_y_log10()
-
-
-hearing_words_data <- hearing_words_data %>%
-  bind_tf_idf(word, hearing, n)
-
-hearing_words_data %>%
-  select(-total) %>%
-  arrange(desc(tf_idf)) %>%
-  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
-  group_by(hearing) %>% 
-  top_n(20) %>% 
-  ungroup() %>%
-  ggplot(aes(word, tf_idf, fill = hearing)) +
-  geom_col(show.legend = FALSE) +
-  labs(x = NULL, y = "tf-idf") +
-  facet_wrap(~hearing, ncol = 2, scales = "free") +
-  coord_flip() 
+# Sum all words for each justice 
+# Instead of prop, use Count and then use binomial regression 
 ```
 
 
+```{r}
+
+abortion <- summary_justice %>% 
+  filter(Word == "abortion") %>% 
+ggplot(aes(x = Word, y = prop, fill = Justice)) +
+  geom_col(position = "dodge", color = "white") + 
+    labs(title = "Text Mining of Supreme Court Senate Confirmation Hearings", 
+       subtitle = "Nominating Presidents: Reagan to Obama",
+       y = "Proportion (Number of Times Word Spoken / Total Words Spoken", 
+       x = "Word") +
+scale_fill_manual(name = "Justice", 
+                    values = c("#d28777", 
+                               "#cd7a68", 
+                               "#b86d5d", 
+                               "#a46153", 
+                               "#8f5548", 
+                               "#7b493e", 
+                               "#663d34", 
+                               "#523029", 
+                               "#3d241f", 
+                               "#291814"), 
+                    labels = c("Kennedy", 
+                               "Scalia", 
+                               "Souter", 
+                               "Kagan", 
+                               "Roberts", 
+                               "Gorsuch", 
+                               "Ginsburg", 
+                               "O'Connor", 
+                               "Sotomayor",
+                               "Breyer"))
+
+father_mother <- summary_justice %>% 
+  filter(Word %in% c("mother", "father")) %>% 
+ggplot(aes(x = Word, y = prop, fill = Justice)) +
+  geom_col(position = "dodge", color = "white") +
+  scale_fill_manual(name = "Justice", 
+                    values = c("#d28777", 
+                               "#cd7a68", 
+                               "#b86d5d", 
+                               "#a46153", 
+                               "#8f5548", 
+                               "#7b493e", 
+                               "#663d34", 
+                               "#523029", 
+                               "#3d241f", 
+                               "#291814"), 
+                    labels = c("Kennedy", 
+                               "Scalia", 
+                               "Souter", 
+                               "Kagan", 
+                               "Roberts", 
+                               "Gorsuch", 
+                               "Ginsburg", 
+                               "O'Connor", 
+                               "Sotomayor",
+                               "Breyer")) +
+  labs(title = "Text Mining of Supreme Court Senate Confirmation Hearings", 
+       subtitle = "Nominating Presidents: Reagan to Obama",
+       x = "Word", 
+       y = "Proportion (Number of Times Word Spoken / Total Words Spoken)")
+
+
+wife_husband <- summary_justice %>% 
+  filter(Word %in% c("wife", "husband")) %>% 
+ggplot(aes(x = Word, y = prop, fill = Justice)) +
+  geom_col(position = "dodge", color = "white") +
+  scale_fill_manual(name = "Justice", 
+                    values = c("#d28777", 
+                               "#cd7a68", 
+                               "#b86d5d", 
+                               "#a46153", 
+                               "#8f5548", 
+                               "#7b493e", 
+                               "#663d34", 
+                               "#523029", 
+                               "#3d241f", 
+                               "#291814"), 
+                    labels = c("Kennedy", 
+                               "Scalia", 
+                               "Souter", 
+                               "Kagan", 
+                               "Roberts", 
+                               "Gorsuch", 
+                               "Ginsburg", 
+                               "O'Connor", 
+                               "Sotomayor",
+                               "Breyer")) +
+  labs(title = "Text Mining of Supreme Court Senate Confirmation Hearings", 
+       subtitle = "Nominating Presidents: Reagan to Obama",
+       x = "Word", 
+       y = "Proportion (Number of Times Word Spoken / Total Words Spoken)")
+
+
+
+
+
+# Text mining graphs! 
+
+father_mother
+abortion
+wife_husband
+
+
+# Models - significance of text mining 
+
+mother <- summary_justice %>% filter(Word == "mother") %>% 
+  mutate(Gender = ifelse(Justice %in% c("Sonia Sotomayor", 
+                                        "Elena Kagan", 
+                                        "Sandra Day O'Connor", 
+                                        "Ruth Bader Ginsburg"), 1, 0))
+
+object <- lm(prop ~ Gender + Justice,
+    data = mother) 
+
+summary(object)
+
+```
 
 ```{r pressure, echo=FALSE}
 
-library(readxl)
-library(tidytext)
-library(ggpubr) 
-library(tidyverse)
-library(rvest)
-library(dplyr)
-library(tidytext)
-library(ggplot2)
-library(pdftools)
-library(gt)
-library(ggthemes)
-library(lubridate)
-library(rstanarm)
 
 nomination_data <- read_excel("Alexa_Final_Project_Inner/nomination_data.xlsx") %>% 
   mutate(party = ifelse(Party == "Republican", 
@@ -205,10 +250,14 @@ plot2 <- ggplot(nomination_data, aes(gender)) +
        x = "Gender of Nominee", 
        y = "Number")
   
+# IS THIS A REGRESSION OR JUST A PROPORTION ????
+
 fit_obj <- stan_glm(data = nomination_data, 
                     female ~ party - 1, 
-                    family = gaussian(), 
+                    family = binomial(), 
                     refresh = 0)
+
+print(fit_obj, digits = 3)
 
 nomination_data2 <- nomination_data %>% 
   filter(!Yes == "n/a") %>% 
@@ -219,7 +268,7 @@ nomination_data2 <- nomination_data %>%
 plot3 <- ggplot(nomination_data2, aes(year, affirm)) +
   geom_point() + 
   facet_wrap(~equal) +
-  geom_smooth(method = "lm", se = FALSE, color = "#6889cd") + 
+  geom_smooth(method = "lm", se = TRUE, color = "#6889cd") + 
   theme_light() +
   theme(text = element_text(family = "Palatino"),
         axis.text.x = element_text(size = 7),
@@ -229,7 +278,11 @@ plot3 <- ggplot(nomination_data2, aes(year, affirm)) +
        x = "Year (1971-2020)", 
        title = "Political Polarization in Supreme Court Senate Confirmations")
 
-plot3
+model_tbl <- tbl_regression(fit_obj, intercept = TRUE) %>%  
+  as_gt() %>%
+  tab_header(title = "What will be the gender of the next nominee?")
+
+model_tbl
 ```
 
 ```{r}
@@ -270,11 +323,48 @@ judges <- read_csv("Alexa_Final_Project_Inner/judges.csv",
     c("law_school" = "school_2")) %>% 
     filter(date >= as.Date("1981-08-19") & date <= as.Date("2020-11-01")) %>% 
   mutate(president = as.factor(president)) 
-
+ 
+judges$female <- 0
+judges$female[which(judges$gender == "Female")] <- 1
 
 write_rds(judges, "judges.rds")
   
 ```
+
+
+```{r}
+
+# Writing a regression 
+library(rstanarm)
+
+glm(female ~ party + president,
+data = judges, 
+family = binomial())  %>% 
+  tidy()
+
+# RONALD REAGAN IS NOT WORKING WHEN USING GLM BUT IT MAKES NO SENSE WHY 
+
+stan_glm(female ~ party + president,
+data = judges, 
+family = binomial(), 
+refresh = 0) 
+
+
+stan_glm(female ~ year + party + law_school, 
+data = judges, 
+refresh = 0, 
+family = binomial())
+
+library(MASS)
+
+temp_model1 <- glm(female ~ year + party + law_school, 
+data = judges, 
+family = "binomial")
+summary(temp_model1)
+
+
+```
+
 
 ```{r}
 # Arrange judges dataset for the 39 years since Sandra Day O'Connor, the first
@@ -324,6 +414,9 @@ stats <- judges %>%
 stats
 
 ```
+
+
+
 ```{r}
 
 # just women graphs 
@@ -350,15 +443,14 @@ women_graph_nominee
 ```
 
 ```{r}
-female_top10 <- female_nominees %>% 
+female_top_14 <- female_nominees %>% 
   group_by(law_school, party) %>% 
   summarise(law_school_totals = n(), .groups = "drop") %>% 
   filter(law_school %in% c("Yale Law School", 
                            "Harvard Law School", 
                            "Stanford Law", 
                            "Columbia Law School", 
-                           "Columbia Law School", 
-                           "Chicago-Kent College of Law", 
+                           "New York University",
                            "New York University School of Law", 
                            "Northwestern University School of Law (now Pritzker School of Law)", 
                            "Northwestern University",
@@ -368,37 +460,55 @@ female_top10 <- female_nominees %>%
                            "University of Michigan", 
                            "University of Virginia",	
                            "University of Virginia School of Law", 
-                           "University of Pennsylvania Law School (now Carey Law School)")) 
+                           "University of California, Berkeley, School of Law",
+                           "University of Chicago Law School",
+                           "University of Chicago", 
+                           "Chicago-Kent College of Law", 
+                           "University of Pennsylvania Law School (now Carey Law School)",
+                           "Yale University", 
+                           "University of Michigan", 
+                           "University of Michigan Law School", 
+                           "Duke University", 
+                           "Duke University School of Law", 
+                           "Georgetown University Law Center", 
+                           "Georgetown College (now Georgetown University) Law Center", 
+                           "Cornell Law School")) 
 
 female_top10 %>% 
   ggplot(aes(x = law_school, y = law_school_totals, fill = party)) +
   geom_col(position = "dodge") +  
-  theme(axis.text.x=element_text(angle =- 10, vjust = 0.5))
+  theme(axis.text.x=element_text(angle =- 90, vjust = 0.5))
 
-female_top10 %>% 
+female_top_14_R <- female_top_14 %>% 
   filter(party == "Republican") %>% 
-  summarise(sum = sum(law_school_totals))
+  summarise(sum = sum(law_school_totals)) %>% 
+  mutate(prop = (sum/178)*100)
 
-female_top10 %>% 
+female_top_14_D <- female_top_14 %>% 
   filter(party == "Democratic") %>% 
-  summarise(sum = sum(law_school_totals))
+  summarise(sum = sum(law_school_totals)) %>% 
+  mutate(prop = (sum/231)*100)
 
-# 98 - Total from Top 10 
-# 34 - Republicans
-# 64 - Democrats 
+
+# 125 - Total from Top 14 
+# 49 - Republicans
+# 76 - Democrats 
 # 409 - Total of female nominees 
 # 178 - Total Rep Nominees 
 # 231 - Total Dem Nominee
 
-# 34/178 = 19.1% (R) 
+# 49/178 = 27.52% (R) 
 
-# 64/231 = 27.7% (D) 
+# 76/231 = 32.90% (D) 
 
 # Democrats may be MORE qualified than their Republican counterparts (?) 
 
 
+```
 
-male_top10 <- judges %>% 
+```{r}
+
+male_top_14 <- judges %>% 
   filter(gender == "Male") %>% 
   group_by(law_school, party) %>% 
   summarise(law_school_totals = n(), .groups = "drop") %>% 
@@ -406,8 +516,7 @@ male_top10 <- judges %>%
                            "Harvard Law School", 
                            "Stanford Law", 
                            "Columbia Law School", 
-                           "Columbia Law School", 
-                           "Chicago-Kent College of Law", 
+                           "New York University",
                            "New York University School of Law", 
                            "Northwestern University School of Law (now Pritzker School of Law)", 
                            "Northwestern University",
@@ -417,40 +526,48 @@ male_top10 <- judges %>%
                            "University of Michigan", 
                            "University of Virginia",	
                            "University of Virginia School of Law", 
-                           "University of Pennsylvania Law School (now Carey Law School)"))
+                           "University of California, Berkeley, School of Law",
+                           "University of Chicago Law School",
+                           "University of Chicago", 
+                           "Chicago-Kent College of Law", 
+                           "University of Pennsylvania Law School (now Carey Law School)",
+                           "Yale University", 
+                           "University of Michigan", 
+                           "University of Michigan Law School", 
+                           "Duke University", 
+                           "Duke University School of Law", 
+                           "Georgetown University Law Center", 
+                           "Georgetown College (now Georgetown University) Law Center", 
+                           "Cornell Law School")) 
 
 
 
-male_top10 %>% 
+male_top_14_R <- male_top_14 %>% 
   filter(party == "Republican") %>% 
-  summarise(sum = sum(law_school_totals))
+  summarise(sum = sum(law_school_totals)) %>% 
+  mutate(prop = (sum/853)*100)
 
-# 177 
+# 28%
 
-# 853
-# 
-# 177/853 = 20.75%
-
-male_top10 %>% 
+male_top_14_D <- male_top_14 %>% 
   filter(party == "Democratic") %>% 
-  summarise(sum = sum(law_school_totals))
+  summarise(sum = sum(law_school_totals)) %>% 
+  mutate(prop = (sum/434)*100)
 
-# 126
 
-# 434
-# 
-# 126/434 = 29%
+# 35%
 
-top10_table <- full_join(male_top10, female_top10, by = c("sum", "top_10"))
-
-top10_table
 
 ```
+
+
+
 
 ```{r}
 
 library(lubridate)
 
+# Presidents appointing federal court judges that are women graph 
 
 judges %>% 
 filter(date >= as.Date("1981-08-19") & date <= as.Date("2020-11-01")) %>% 
@@ -466,9 +583,6 @@ geom_line() +
   scale_color_manual(name = "Gender", 
                      values = c("#cd7a68", "#6889cd"), 
                      labels = c("Female", "Male"))
-
-
-
 
 
 
