@@ -20,8 +20,17 @@ library(ggpubr)
 library(rvest)
 library(ggthemes)
 library(lubridate)
-library(RcppArmadillo)
 library(rstanarm)
+library(gt)
+library(gtsummary)
+
+
+######################### SUPREME COURT NOMINEE DATA ##########################
+
+
+# This first section uses data about the Supreme Court nominees since the 
+# appointment of Sandra Day O'Connor in 1981. 
+
 
 nomination_data <- read_excel("nomination_data.xlsx") %>% 
     mutate(party = ifelse(Party == "Republican", 
@@ -36,13 +45,38 @@ nomination_data <- read_excel("nomination_data.xlsx") %>%
     mutate(equal = ifelse(Party == Maj_Party, 
                           "Presidential Party Matches Senate Majority", 
                           "Presidential Party Does Not Match Senate Majority"))
+
+# What are the odds that the next supreme court nominee will be a woman?  
+
+fit_obj <- stan_glm(data = nomination_data, 
+                    female ~ party - 1, 
+                    family = binomial(), 
+                    refresh = 0)
+
+# Further wrangling of the nomination_data for another graph. 
+
 nomination_data2 <- nomination_data %>% 
     filter(!Yes == "n/a") %>% 
     mutate(year = as.numeric(year(Date))) %>% 
     mutate(affirm = as.numeric(Yes)) %>% 
     filter(!affirm == 0)
 
+
+######################### FEDERAL COURT NOMINEES ##############################
+
+
 judges <- read_rds("judges.rds")
+
+female_nominees <- judges %>% 
+    filter(gender == "Female")
+
+judges$female <- 0
+judges$female[which(judges$gender == "Female")] <- 1
+
+federal_model <- stan_glm(female ~ party + president,
+         data = judges, 
+         family = binomial(), 
+         refresh = 0) 
 
 ui <- navbarPage(
     "Supreme Sexism", 
@@ -78,37 +112,44 @@ ui <- navbarPage(
              plotOutput("over_time"), 
              p("In the above graph, we can see all Presidential confirmations to 
                a federal bench since 1981. There are large cycles of red and blue,
-               representing the transferring regimes. The peaks represent a time period 
-               in which Presidents were able to smoothly confirm more justices, whereas 
-               the troughs demonstrate alternative priorities or difficulty 
-               in the Senate."),
+               representing the transferring governments The peaks represent a 
+               time period in which Presidents were able to smoothly confirm 
+               more justices, whereas the troughs demonstrate alternative 
+               priorities or difficulty in the Senate."),
              
-             plotOutput("basic_plot"),
-             p("The above graph focuses just on Supreme Court nominees: Democrats have 
-               appointed more women than men, while Republicans have appointed many 
-               more men to the highest court in the land. The graph below demonstrates 
-               the cyclical nature of new female federal judges. The gap between 
-               Republicans and Democrats is stark. "), 
+             gt_output(outputId = "stat"),
+             
              plotOutput("women_nominees"),
              
-             gt_output("stat"),
+             gt_output(outputId = "model_2"),
              
-             h3("Hi Everyone!"),
-             p("My name is Alexa and I study Government", 
-               style = "font-family: 'Palantino'",
-               a("Connecting to News Source", href = "https://www.cnn.com"),
-               "You can reach me at alexa_jordan@college.harvard.edu."), 
+             p("This is a model that looks at the impact of the party 
+               and the president on the gender of federal court nominees. This
+               regression found that Republicans were much less likely to 
+               nominate women for the federal bench overall, but Donald J
+               Trump actually outperformed Bill Clinton. All Presidents have 
+               been at least somewhat less likely to nominate a woman"),
+             
              style = "font-family: 'Palantino'"),
     
-    tabPanel("Presidents",
+    tabPanel("Supreme Court Nominees",
               fluidPage(
+                  plotOutput("basic_plot"),
+                  p("The above graph focuses just on Supreme Court nominees: 
+                  Democrats have appointed more women than men, while 
+                  Republicans have appointed many more men to the highest court 
+                  in the land. The graph below demonstrates the cyclical nature 
+                  of new female federal judges. The gap between Republicans and 
+                  Democrats is stark. "), 
                   selectInput("choose_president", "President", 
                               choices = levels(judges$president)),
-                  #select("x", "Compare with President", choices = names(judges)),
-                  # selectInput("geom", "Type of Graph", c("point", "column", "jitter")),
                   plotOutput("plot"), 
-                  p("Bruh. Y'all are SEXIST LITTLE *******",
-                    style = "font-family: 'Palantino'")
+                  p("The trends do not really seem to be getting better. 
+                    The statistical analysis of these trends does not bode well 
+                    either for women on the Supreme Court.",
+                    style = "font-family: 'Palantino'"), 
+                  gt_output(outputId = "model_tbl")
+                  
               ), style = "font-family: 'Palantino'"),
     tabPanel("State of the Union",
              titlePanel("Polarization"),
@@ -166,17 +207,17 @@ ui <- navbarPage(
                question that RBG’s leadership has impacted my vision of what 
                success looks like for a woman in law."),
              
-             p(" A change in the rule of law comes first: culture follows suit. 
+             p("A change in the rule of law comes first: culture follows suit. 
                Ruth Bader Ginsburg is a woman that I hope we continue to learn 
                from as a Supreme Court justice, lawyer, politician, 
                parent, and scholar. We will all be better off for it."), 
              
              p("My final project is dedicated to her memory."),
              
-             h3("Project Background and Motivations"),
-             
-             p("Hello, and welcome to my final project for Gov50", 
-               style = "font-family: 'Palantino'"),
+             p("I have used publically available data",
+               a("You can check out my data sources here", 
+                 href = "https://www.senate.gov/legislative/nominations/SupremeCourtNominations1789present.htm"),
+               "You can reach me at alexa_jordan@college.harvard.edu."),
              style = "font-family: 'Palantino'"
             
              )
@@ -230,7 +271,7 @@ server <- function(input, output, session) {
         ggplot(nomination_data2, aes(year, affirm)) +
             geom_point() + 
             facet_wrap(~equal) +
-            geom_smooth(method = "lm", se = FALSE, color = "#6889cd") + 
+            geom_smooth(method = "lm", se = TRUE, color = "#6889cd") + 
             theme_light() +
             theme(text = element_text(family = "Palatino"),
                   axis.text.x = element_text(size = 7),
@@ -262,20 +303,34 @@ server <- function(input, output, session) {
         
     })
     output$stat <- render_gt({
-        judges %>% 
-        group_by(party, gender) %>% 
-        summarize(judges = n(), .groups = "drop") %>% 
+        judges %>%
+        group_by(party, gender) %>%
+        summarize(judges = n(), .groups = "drop") %>%
         gt() %>% 
-        cols_label(party = "Party", 
-                   gender = "Gender", 
-                   judges = "Number of Judges") %>%  
-        tab_style(cell_borders(sides = "right"), 
-                  location = cells_body(columns = vars(party))) %>% 
+        cols_label(party = "Party",
+                   gender = "Gender",
+                   judges = "Number of Judges") %>%
+        tab_header(title = "Breakdown of Federal Judges") %>% 
+        tab_style(cell_borders(sides = "right"),
+                  location = cells_body(columns = vars(party))) %>%
         tab_style(cell_text(weight = "bold"),
                   location = cells_body(columns = vars(judges))) %>%
-        cols_align(align = "center", columns = TRUE) %>% 
+        cols_align(align = "center", columns = TRUE) %>%
         fmt_markdown(columns = TRUE)
         })
+    
+    output$model_tbl <- render_gt({
+        tbl_regression(fit_obj, intercept = TRUE) %>%  
+            as_gt %>% 
+            tab_header(title = "What will be the gender of the next nominee?")
+    })
+    
+    output$model_2 <- render_gt({
+        tbl_regression(federal_model, intercept = TRUE) %>% 
+            as_gt() %>% 
+            tab_header(title = "Presidents and Parties: 
+                       Nominating Female Justices")
+    })
     
     output$women_nominees <- renderPlot({
         ggplot(female_nominees, aes(x = date, fill = party)) + 

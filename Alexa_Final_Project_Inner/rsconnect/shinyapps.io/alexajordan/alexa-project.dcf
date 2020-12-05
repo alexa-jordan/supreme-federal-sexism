@@ -5,8 +5,9 @@ account: alexajordan
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 3036441
-bundleId: 3776563
+bundleId: 3940953
 url: https://alexajordan.shinyapps.io/alexa-project/
-when: 1603508489.15035
+when: 1607045913.7407
 asMultiple: FALSE
 asStatic: FALSE
+ignoredFiles: SCDB_2020_01_justiceCentered_Citation.csv
